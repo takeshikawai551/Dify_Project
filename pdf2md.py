@@ -1,5 +1,5 @@
 import os
-import fitz  # PyMuPDF
+import pymupdf
 import pdfplumber
 from pathlib import Path
 
@@ -39,7 +39,7 @@ def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
         print(f"⚠️ 表抽出スキップ: {e}")
 
     # --- 2. PyMuPDFでテキストと画像を抽出 ---
-    with fitz.open(pdf_path) as doc:
+    with pymupdf.open(pdf_path) as doc:
         for page_index, page in enumerate(doc, start=1):
             text = page.get_text("text")
             text_parts.append(f"\n\n## Page {page_index}\n\n{text}\n")
