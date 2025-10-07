@@ -2,24 +2,25 @@ import os
 import pymupdf
 import pdfplumber
 from pathlib import Path
-
+import argparse
 #
 # pdf markdown 変換
 #
 
-SRC_DIR = Path("./src")
+# WSLでのマウント手順
+# windows側で
+# sudo mkdir -p /mnt/x
+# sudo mount -t drvfs X: /mnt/x
+
+SRC_DIR = Path("/mnt/x")
 DIST_DIR = Path("./dist")
 IMG_DIR = DIST_DIR / "images"
-
 def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
-
 def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
     ensure_dir(dist_txt_path.parent)
     ensure_dir(IMG_DIR)
-
     text_parts = []
-
     # --- 1. まずはpdfplumberで表を抽出 ---
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -37,39 +38,49 @@ def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
                     text_parts.append(f"\n\n### 表 {page_num}-{idx}\n\n{table_text}\n\n")
     except Exception as e:
         print(f"⚠️ 表抽出スキップ: {e}")
-
     # --- 2. PyMuPDFでテキストと画像を抽出 ---
     with pymupdf.open(pdf_path) as doc:
         for page_index, page in enumerate(doc, start=1):
             text = page.get_text("text")
             text_parts.append(f"\n\n## Page {page_index}\n\n{text}\n")
-
-            # 画像抽出
-            # 画像は読み込まないので一時除外
-            # for img_index, img in enumerate(page.get_images(full=True), start=1):
-            #     xref = img[0]
-            #     base_image = doc.extract_image(xref)
-            #     image_bytes = base_image["image"]
-            #     image_ext = base_image["ext"]
-            #     image_name = f"{pdf_path.stem}_p{page_index}_{img_index}.{image_ext}"
-            #     image_path = IMG_DIR / image_name
-            #     with open(image_path, "wb") as img_file:
-            #         img_file.write(image_bytes)
-            #     text_parts.append(f"![{image_name}](images/{image_name})\n")
-
+            # 画像抽出はコメントアウトのまま
     # --- 3. 出力 ---
     with open(dist_txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(text_parts))
     print(f"✅ {dist_txt_path} を生成しました。")
-
-def main():
+def convert_all_unprocessed():
     for root, _, files in os.walk(SRC_DIR):
         for file in files:
             if file.lower().endswith(".pdf"):
                 src_pdf = Path(root) / file
                 rel_path = src_pdf.relative_to(SRC_DIR)
                 dist_txt_path = DIST_DIR / rel_path.with_suffix(".md")
+                if dist_txt_path.exists():
+                    print(f"⏩ 既に変換済み: {dist_txt_path}")
+                    continue
                 extract_text_and_images(src_pdf, dist_txt_path)
-
+def convert_single_file(file_path: Path):
+    if not file_path.exists():
+        print(f"⚠️ 指定ファイルが存在しません: {file_path}")
+        return
+    if file_path.suffix.lower() != ".pdf":
+        print(f"⚠️ PDFファイルを指定してください: {file_path}")
+        return
+    # distフォルダ内の対応するmdパスを計算
+    try:
+        rel_path = file_path.relative_to(SRC_DIR)
+    except ValueError:
+        # src外のファイルならdist直下に配置
+        rel_path = file_path.name
+    dist_txt_path = DIST_DIR / Path(rel_path).with_suffix(".md")
+    extract_text_and_images(file_path, dist_txt_path)
+def main():
+    parser = argparse.ArgumentParser(description="PDF→Markdown変換")
+    parser.add_argument("file", nargs="?", help="変換したいPDFファイルのパス（省略時はsrc内全PDF処理）")
+    args = parser.parse_args()
+    if args.file:
+        convert_single_file(Path(args.file))
+    else:
+        convert_all_unprocessed()
 if __name__ == "__main__":
     main()
