@@ -7,6 +7,9 @@ import argparse
 from tqdm import tqdm
 import time
 from PIL import Image
+from PyPDF2 import PdfReader, PdfWriter
+from pathlib import Path
+import gc
 
 SRC_DIR = Path("/mnt/x")
 DIST_DIR = Path("/mnt/z/GPT")
@@ -14,14 +17,132 @@ IMG_DIR = DIST_DIR / "images"
 TODO_FILE = DIST_DIR / "todo_files.txt"
 IGNORE_FILE = DIST_DIR /"ignore_files.txt"
 
+def split_pdf_by_pages(src_pdf_path: Path, max_size_bytes=1_000_000_000, temp_dir: Path = Path("/tmp")) -> list:
+    """
+    PDFファイルがmax_size_bytesを超える場合、1ページずつ分割してtemp_dirに保存。
+    分割後ファイルのパスリストを返す。
+    超えなければ元ファイルのリストを返す。
+    """
+    size = src_pdf_path.stat().st_size
+    if size <= max_size_bytes:
+        return [src_pdf_path]
+
+    reader = PdfReader(str(src_pdf_path))
+    total_pages = len(reader.pages)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    split_files = []
+
+    for i in range(total_pages):
+        writer = PdfWriter()
+        writer.add_page(reader.pages[i])
+        split_pdf_path = temp_dir / f"{src_pdf_path.stem}_part_{i+1}.pdf"
+        with open(split_pdf_path, "wb") as f_out:
+            writer.write(f_out)
+        split_files.append(split_pdf_path)
+
+    return split_files
 def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
+
+def convert_pdf_with_split(src_pdf: Path, dist_txt_path: Path, max_size_bytes=1_000_000_000):
+    temp_dir = dist_txt_path.parent / "temp_split"
+    split_files = split_pdf_by_pages(src_pdf, max_size_bytes=max_size_bytes, temp_dir=temp_dir)
+
+    text_parts = []
+
+    for split_pdf in split_files:
+        # 元のdist_txt_pathにページ区切りや分割ファイル名を付加して出力先を分ける方法もあり
+        # ここでは単純にファイルごとに別名で保存する例
+        if len(split_files) == 1:
+            out_path = dist_txt_path
+        else:
+            out_path = dist_txt_path.with_name(dist_txt_path.stem + f"_{split_pdf.stem}" + dist_txt_path.suffix)
+
+        extract_text_and_images(split_pdf, out_path)
+        text_parts.append(f"Processed split file: {split_pdf.name}")
+
+    print("\n".join(text_parts))
+
+def write_split_md(text_parts: list[str], base_path: Path, max_size_bytes=15 * 1024 * 1024):
+    """
+    text_parts（文字列リスト）をmax_size_bytesごとに分割して
+    base_pathのファイル名をベースに複数ファイルに分けて保存する。
+    """
+
+    part_num = 1
+    buffer = []
+    buffer_size = 0
+
+    for part in text_parts:
+        part_bytes = part.encode("utf-8")
+        part_len = len(part_bytes)
+
+        # 現バッファに足すとサイズオーバーならファイル出力してリセット
+        if buffer_size + part_len > max_size_bytes and buffer:
+            out_path = base_path.with_name(f"{base_path.stem}_part{part_num},{base_path.suffix}")
+            with open(out_path, "w", encoding="utf-8") as f_out:
+                f_out.write("".join(buffer))
+            print(f"分割ファイルを書き出しました: {out_path}")
+            part_num += 1
+            buffer = []
+            buffer_size = 0
+
+        buffer.append(part)
+        buffer_size += part_len
+
+    # 残ったバッファを最後のファイルとして書き出し
+    if buffer:
+        out_path = base_path.with_name(f"{base_path.stem}_part{part_num},{base_path.suffix}")
+        with open(out_path, "w", encoding="utf-8") as f_out:
+            f_out.write("".join(buffer))
+        print(f"分割ファイルを書き出しました: {out_path}")
+
+
+def write_md_with_size_check(text_parts: list[str], base_path: Path, max_size_bytes=15 * 1024 * 1024):
+    """
+    text_partsの合計サイズを判定し、max_size_bytesを超えれば分割して書き出し、
+    超えなければ単一ファイルにまとめて書き出す。
+    """
+    # 全体サイズ計算
+    total_size = sum(len(part.encode("utf-8")) for part in text_parts)
+    if total_size <= max_size_bytes:
+        # サイズ以内なので単一ファイルに書き出し
+        with open(base_path, "w", encoding="utf-8") as f:
+            f.write("".join(text_parts))
+        print(f"ファイルを書き出しました（サイズ: {total_size} bytes）: {base_path}")
+    else:
+        # サイズ超過のため分割書き出し
+        print(f"ファイルサイズ {total_size} bytes が上限 {max_size_bytes} bytes を超えたため分割します。")
+        part_num = 1
+        buffer = []
+        buffer_size = 0
+        for part in text_parts:
+            part_len = len(part.encode("utf-8"))
+            if buffer_size + part_len > max_size_bytes and buffer:
+                out_path = base_path.with_name(f"{base_path.stem}_part{part_num},{base_path.suffix}")
+                with open(out_path, "w", encoding="utf-8") as f_out:
+                    f_out.write("".join(buffer))
+                print(f"分割ファイルを書き出しました: {out_path}")
+                part_num += 1
+                buffer = []
+                buffer_size = 0
+            buffer.append(part)
+            buffer_size += part_len
+        # 最後のバッファ書き出し
+        if buffer:
+            out_path = base_path.with_name(f"{base_path.stem}_part{part_num},{base_path.suffix}")
+            with open(out_path, "w", encoding="utf-8") as f_out:
+                f_out.write("".join(buffer))
+            print(f"分割ファイルを書き出しました: {out_path}")
+
 def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
     ensure_dir(dist_txt_path.parent)
     ensure_dir(IMG_DIR)
-    text_parts = []
-    print(f"✅ {dist_txt_path} を生成開始。")
-    with pdfplumber.open(pdf_path) as pdf, pymupdf.open(pdf_path) as doc:
+    pdf_size_bytes = pdf_path.stat().st_size
+    pdf_size_kb = pdf_size_bytes / 1024
+    print(f"✅ {dist_txt_path} を生成開始。 元PDFファイルサイズ: {pdf_size_kb:.2f} KB")
+    with pdfplumber.open(pdf_path) as pdf, pymupdf.open(pdf_path) as doc, \
+        open(dist_txt_path, "w", encoding="utf-8") as f_out:
         page_count = len(pdf.pages)
         for page_num in tqdm(range(page_count), desc="ページ処理中", unit="ページ"):
             page_plumber = pdf.pages[page_num]
@@ -36,7 +157,7 @@ def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
                     header = "| " + " | ".join(["---"] * len(table[0])) + " |"
                     md.insert(1, header)
                 table_text = "\n".join(md)
-                text_parts.append(f"\n\n### 表 {page_num+1}-{idx}\n\n{table_text}\n\n")
+                f_out.write(f"\n\n### 表 {page_num+1}-{idx}\n\n{table_text}\n\n")
             # 2. 画像抽出
             image_list = page_fitz.get_images(full=True)
             for img_idx, img_info in enumerate(image_list, start=1):
@@ -44,20 +165,20 @@ def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 img_ext = base_image["ext"]
-                # Pillowで画像を開く
                 image = Image.open(io.BytesIO(image_bytes))
-                # アスキーアートに変換
                 try:
                     ascii_art = image_to_ascii_art(image, width=80)
                 except Exception as e:
                     print(f"⚠️ 画像のアスキーアート変換に失敗しました: {e}")
                     ascii_art = "[画像のアスキーアート変換に失敗しました]"
-                text_parts.append(f"\n\n### 画像 {page_num+1}-{img_idx} (ASCII Art)\n\n```\n{ascii_art}```\n\n")
+                f_out.write(f"\n\n### 画像 {page_num+1}-{img_idx} (ASCII Art)\n\n```\n{ascii_art}```\n\n")
             # 3. テキスト抽出
             text = page_fitz.get_text("text")
-            text_parts.append(f"\n\n## Page {page_num+1}\n\n{text}\n")
-    with open(dist_txt_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(text_parts))
+            f_out.write(f"\n\n## Page {page_num+1}\n\n{text}\n")
+            # 明示的にオブジェクト解放（必要に応じて）
+            del page_plumber
+            del page_fitz
+            gc.collect()
     print(f"✅ {dist_txt_path} を生成しました。")
 
 def image_to_ascii_art(image: Image.Image, width=80) -> str:
@@ -144,7 +265,8 @@ def convert_all_unprocessed():
         print(f"生成開始({i}/{total}): {dist_txt_path}")
         file_start = time.time()
         try:
-            extract_text_and_images(src_pdf, dist_txt_path)
+            # extract_text_and_images(src_pdf, dist_txt_path)
+            convert_pdf_with_split(src_pdf, dist_txt_path)
             file_elapsed = time.time() - file_start
             print(f"完了({i}/{total}): {dist_txt_path} 処理時間: {file_elapsed:.2f}秒")
             # 成功したのでtodoから削除
@@ -174,7 +296,8 @@ def convert_single_file(file_path: Path):
     except ValueError:
         rel_path = file_path.name
     dist_txt_path = DIST_DIR / rel_path.with_suffix(".md")
-    extract_text_and_images(file_path, dist_txt_path)
+    #extract_text_and_images(file_path, dist_txt_path)
+    convert_pdf_with_split(src_pdf, dist_txt_path)
 def main():
     parser = argparse.ArgumentParser(description="PDF→Markdown変換")
     parser.add_argument("file", nargs="?", help="変換したいPDFファイルのパス（省略時はtodoファイルのPDFを処理）")
