@@ -1,10 +1,13 @@
 import os
+import io
 import pymupdf
 import pdfplumber
 from pathlib import Path
 import argparse
 from tqdm import tqdm
 import time
+from PIL import Image
+
 SRC_DIR = Path("/mnt/x")
 DIST_DIR = Path("/mnt/z/GPT")
 IMG_DIR = DIST_DIR / "images"
@@ -34,12 +37,51 @@ def extract_text_and_images(pdf_path: Path, dist_txt_path: Path):
                     md.insert(1, header)
                 table_text = "\n".join(md)
                 text_parts.append(f"\n\n### 表 {page_num+1}-{idx}\n\n{table_text}\n\n")
-            # 2. テキスト抽出
+            # 2. 画像抽出
+            image_list = page_fitz.get_images(full=True)
+            for img_idx, img_info in enumerate(image_list, start=1):
+                xref = img_info[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                img_ext = base_image["ext"]
+                # Pillowで画像を開く
+                image = Image.open(io.BytesIO(image_bytes))
+                # アスキーアートに変換
+                try:
+                    ascii_art = image_to_ascii_art(image, width=80)
+                except Exception as e:
+                    print(f"⚠️ 画像のアスキーアート変換に失敗しました: {e}")
+                    ascii_art = "[画像のアスキーアート変換に失敗しました]"
+                text_parts.append(f"\n\n### 画像 {page_num+1}-{img_idx} (ASCII Art)\n\n```\n{ascii_art}```\n\n")
+            # 3. テキスト抽出
             text = page_fitz.get_text("text")
             text_parts.append(f"\n\n## Page {page_num+1}\n\n{text}\n")
     with open(dist_txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(text_parts))
     print(f"✅ {dist_txt_path} を生成しました。")
+
+def image_to_ascii_art(image: Image.Image, width=80) -> str:
+    # グレースケールの文字セット（濃淡に応じて）
+    ascii_chars = "@%#*+=-:. "
+  
+    # 画像のアスペクト比を維持しつつリサイズ
+    aspect_ratio = image.height / image.width
+    height = int(width * aspect_ratio * 0.55)  # 0.55は文字の縦横比補正
+  
+    image = image.convert("L").resize((width, height))
+  
+    pixels = image.getdata()
+    chars = []
+    for pixel_value in pixels:
+        # 0(黒)〜255(白)を文字セットのインデックスに変換
+        index = int(pixel_value / 255 * (len(ascii_chars) - 1))
+        chars.append(ascii_chars[index])
+    # widthごとに改行して文字列に
+    ascii_art = ""
+    for i in range(0, len(chars), width):
+        ascii_art += "".join(chars[i:i+width]) + "\n"
+    return ascii_art
+
 def normalize_path(path):
     return os.path.normpath(os.path.abspath(path))
 def load_todo_list():
