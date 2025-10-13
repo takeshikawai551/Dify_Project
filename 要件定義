@@ -2,3 +2,38 @@
 要件定義
 --------
 1. Difyで鋳鍛データをナレッジとして生成AI化とする
+
+1.セットアップ手順
+python -m venv venv 
+source ./venv/bin/activate
+pip install -r requirements.txt
+mkdir src
+mkdir dist
+srcフォルダに変換元のpdfを配置する
+
+WSLでのマウント手順
+windows側で//172.27.21.3/disk1/衣浦工場第1工場/共通/取扱説明書をネットワークドライブに割り当て(以下xの場合)
+sudo mkdir -p /mnt/x
+sudo mount -t drvfs X: /mnt/x
+
+2.ファイル説明
+pdf2md.py
+  概要
+    srcフォルダに配置したpdfファイルをすべて読み込む
+    markdown変換してdistフォルダに保存する
+  起動方法
+   python pdf2md.py
+
+pdf2txt.py
+  概要
+    srcフォルダに配置したpdfファイルをすべて読み込む
+    markdown変換してdistフォルダに保存する
+  起動方法  
+    python pdf2txt.py
+
+upload.py
+  概要
+    srcフォルダに配置したpdfファイルをすべて読み込む
+    markdown変換してdistフォルダに保存する
+  起動方法  
+    python upload.py
