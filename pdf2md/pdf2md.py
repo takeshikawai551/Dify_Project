@@ -242,6 +242,15 @@ def make_todo_list():
                     continue
                 pdf_files.append(norm_src_pdf)
     return pdf_files
+
+def add_to_ignore_list(path_str: str):
+    ignore_list = load_ignore_list()
+    if path_str not in ignore_list:
+        ensure_dir(IGNORE_FILE.parent)
+        with open(IGNORE_FILE, "a", encoding="utf-8") as f:
+            f.write(path_str + "\n")
+        print(f"⚠️ メモリ不足のためignoreリストに追加しました: {path_str}")
+
 def convert_all_unprocessed():
     todo_list = load_todo_list()
     if not todo_list:
@@ -265,25 +274,29 @@ def convert_all_unprocessed():
         print(f"生成開始({i}/{total}): {dist_txt_path}")
         file_start = time.time()
         try:
-            # extract_text_and_images(src_pdf, dist_txt_path)
             convert_pdf_with_split(src_pdf, dist_txt_path)
             file_elapsed = time.time() - file_start
             print(f"完了({i}/{total}): {dist_txt_path} 処理時間: {file_elapsed:.2f}秒")
-            # 成功したのでtodoから削除
             new_todo_list.remove(pdf_path_str)
+        except MemoryError as mem_err:
+            print(f"⚠️ メモリ不足エラー発生({i}/{total}): {dist_txt_path} エラー: {mem_err}")
+            add_to_ignore_list(pdf_path_str)
+            if pdf_path_str in new_todo_list:
+                new_todo_list.remove(pdf_path_str)
+            print("メモリ不足のため処理を中止します。")
+            break  # 中止したい場合はbreak、続行したい場合はcontinueに変更可
         except Exception as e:
             print(f"⚠️ 処理失敗({i}/{total}): {dist_txt_path} エラー: {e}")
-            # 失敗してもtodoに残す
             continue
-        # 途中でtodoファイルを更新（任意）
         save_todo_list(new_todo_list)
-    save_todo_list(new_todo_list)  # 最終更新
+    save_todo_list(new_todo_list)
     elapsed = time.time() - start_time
     print(f"✅ 全処理完了 時間: {elapsed:.2f}秒")
     if new_todo_list:
         print(f"⚠️ 未処理ファイルが残っています。todoファイルを確認してください: {TODO_FILE}")
     else:
         print("すべてのファイルを処理完了しました。todoファイルを空にします。")
+
 def convert_single_file(file_path: Path):
     if not file_path.exists():
         print(f"⚠️ 指定ファイルが存在しません: {file_path}")
