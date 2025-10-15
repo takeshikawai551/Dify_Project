@@ -310,7 +310,8 @@ def convert_single_file(file_path: Path):
         rel_path = file_path.name
     dist_txt_path = DIST_DIR / rel_path.with_suffix(".md")
     #extract_text_and_images(file_path, dist_txt_path)
-    convert_pdf_with_split(src_pdf, dist_txt_path)
+    convert_pdf_with_split(file_path, dist_txt_path)
+
 def main():
     parser = argparse.ArgumentParser(description="PDF→Markdown変換")
     parser.add_argument("file", nargs="?", help="変換したいPDFファイルのパス（省略時はtodoファイルのPDFを処理）")
