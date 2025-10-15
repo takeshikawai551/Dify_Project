@@ -269,7 +269,7 @@ def convert_all_unprocessed():
         try:
             rel_path = src_pdf.relative_to(SRC_DIR)
         except ValueError:
-            rel_path = src_pdf.name
+            rel_path = Path(src_pdf.name)
         dist_txt_path = DIST_DIR / rel_path.with_suffix(".md")
         print(f"生成開始({i}/{total}): {dist_txt_path}")
         file_start = time.time()
